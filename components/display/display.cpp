@@ -5,7 +5,7 @@
 #define PANEL_RES_Y 64
 #define PANEL_CHAIN 1
 
-// ===== NUEVOS PINES =====
+// ===== PINES =====
 #define R1 25
 #define G1 26
 #define B1 27
@@ -25,21 +25,21 @@
 
 static MatrixPanel_I2S_DMA *dma_display = nullptr;
 
-// ================= 📌 IMAGEN =================
+// ================= LOGO =================
 const uint16_t logo[4096] = {
 #include "logo_data.inc"
 };
 
+// 🔥 COLOR GLOBAL DEL LOGO
+static uint8_t logo_r = 255;
+static uint8_t logo_g = 255;
+static uint8_t logo_b = 255;
+
 // ================= INIT =================
 void display_init(void)
 {
-    HUB75_I2S_CFG mxconfig(
-        PANEL_RES_X,
-        PANEL_RES_Y,
-        PANEL_CHAIN
-    );
+    HUB75_I2S_CFG mxconfig(PANEL_RES_X, PANEL_RES_Y, PANEL_CHAIN);
 
-    // ===== PINES =====
     mxconfig.gpio.r1 = R1;
     mxconfig.gpio.g1 = G1;
     mxconfig.gpio.b1 = B1;
@@ -58,12 +58,15 @@ void display_init(void)
     mxconfig.gpio.lat = LAT;
     mxconfig.gpio.oe  = OE;
 
-    // (lo dejamos como tu versión estable)
-    // mxconfig.driver = HUB75_I2S_CFG::FM6126A;
+    mxconfig.clkphase = false;
 
     dma_display = new MatrixPanel_I2S_DMA(mxconfig);
     dma_display->begin();
-    dma_display->setBrightness8(120);
+
+    dma_display->clearScreen();
+    dma_display->flipDMABuffer();
+
+    dma_display->setBrightness8(40);
     dma_display->clearScreen();
 }
 
@@ -72,9 +75,7 @@ void display_fill(uint8_t r, uint8_t g, uint8_t b)
 {
     if (!dma_display) return;
 
-    dma_display->fillScreen(
-        dma_display->color565(r, g, b)
-    );
+    dma_display->fillScreen(dma_display->color565(r, g, b));
 }
 
 void display_clear(void)
@@ -83,7 +84,24 @@ void display_clear(void)
     dma_display->clearScreen();
 }
 
-// ================= 🔥 DIBUJAR IMAGEN =================
+// ================= 🔥 LOGO COLOR =================
+void display_set_logo_color(uint8_t r, uint8_t g, uint8_t b)
+{
+    logo_r = r;
+    logo_g = g;
+    logo_b = b;
+}
+
+// convierte pixel blanco → color elegido
+static inline uint16_t logo_color_map(uint16_t px)
+{
+    // negro = transparente
+    if (px == 0x0000) return 0;
+
+    return dma_display->color565(logo_r, logo_g, logo_b);
+}
+
+// ================= DIBUJAR LOGO =================
 void display_draw_image(const uint16_t *img)
 {
     if (!dma_display || !img) return;
@@ -97,7 +115,26 @@ void display_draw_image(const uint16_t *img)
     }
 }
 
-// ================= FUENTE 5x7 =================
+// 🔥 LOGO CON COLOR DINÁMICO (USADO DESDE WEB)
+void display_draw_logo_colored(const uint16_t *img)
+{
+    if (!dma_display || !img) return;
+
+    for (int y = 0; y < PANEL_RES_Y; y++)
+    {
+        for (int x = 0; x < PANEL_RES_X; x++)
+        {
+            uint16_t px = img[y * PANEL_RES_X + x];
+
+            if (px != 0x0000)
+            {
+                dma_display->drawPixel(x, y, logo_color_map(px));
+            }
+        }
+    }
+}
+
+// ================= FUENTE =================
 static const uint8_t font5x7[][5] = {
     {0x7E,0x11,0x11,0x11,0x7E}, {0x7F,0x49,0x49,0x49,0x36},
     {0x3E,0x41,0x41,0x41,0x22}, {0x7F,0x41,0x41,0x22,0x1C},
@@ -114,8 +151,8 @@ static const uint8_t font5x7[][5] = {
     {0x03,0x04,0x78,0x04,0x03}, {0x61,0x51,0x49,0x45,0x43}
 };
 
-// ================= DIBUJAR LETRA =================
-void draw_char(int x, int y, char c, uint16_t color)
+// ================= TEXTO =================
+static void draw_char(int x, int y, char c, uint16_t color)
 {
     if (!dma_display) return;
 
@@ -136,8 +173,8 @@ void draw_char(int x, int y, char c, uint16_t color)
     }
 }
 
-// ================= TEXTO =================
-void display_draw_text(int x, int y, const char *text, uint8_t r, uint8_t g, uint8_t b)
+void display_draw_text(int x, int y, const char *text,
+                       uint8_t r, uint8_t g, uint8_t b)
 {
     if (!dma_display) return;
 

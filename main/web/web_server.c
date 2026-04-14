@@ -12,8 +12,12 @@
 #include "io_ctrl.h"
 #include "system_state.h"
 #include "nvs_storage.h"
+#include "display.h"   // 🔥 DISPLAY
 
 #define TAG "web_server"
+
+/* 🔥 IMPORTANTE: declarar logo */
+extern const uint16_t logo[4096];
 
 /* ================= HTML ================= */
 
@@ -61,6 +65,14 @@ static const char index_html[] =
 "</div>"
 
 "<div class='section'>"
+"<h3>Display RGB</h3>"
+"<input type='color' id='colorPicker' value='#ff0000'><br><br>"
+"<button onclick='setColor()'>Mostrar Color</button>"
+"<button onclick='showLogo()'>Mostrar Logo</button>"
+"<button onclick='clearDisplay()'>Limpiar</button>"
+"</div>"
+
+"<div class='section'>"
 "<h3>System</h3>"
 "<button onclick='resetWifi()'>Reset WiFi</button>"
 "</div>"
@@ -94,6 +106,25 @@ static const char index_html[] =
 " body:JSON.stringify({relay:num,state:state})});"
 " btn.className = state ? 'on':'off';"
 " btn.textContent='Relay '+num+' '+(state?'ON':'OFF');"
+"}"
+
+"function setColor(){"
+" let hex = document.getElementById('colorPicker').value;"
+" let r = parseInt(hex.substring(1,3),16);"
+" let g = parseInt(hex.substring(3,5),16);"
+" let b = parseInt(hex.substring(5,7),16);"
+" fetch('/display',{method:'POST',headers:{'Content-Type':'application/json'},"
+" body:JSON.stringify({mode:'color',r:r,g:g,b:b})});"
+"}"
+
+"function showLogo(){"
+" fetch('/display',{method:'POST',headers:{'Content-Type':'application/json'},"
+" body:JSON.stringify({mode:'logo'})});"
+"}"
+
+"function clearDisplay(){"
+" fetch('/display',{method:'POST',headers:{'Content-Type':'application/json'},"
+" body:JSON.stringify({mode:'clear'})});"
 "}"
 
 "function resetWifi(){"
@@ -196,6 +227,59 @@ static esp_err_t relay_post(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* ================= DISPLAY (CORREGIDO) ================= */
+
+static esp_err_t display_post(httpd_req_t *req)
+{
+    char buf[128];
+    if (read_post_data(req, buf, sizeof(buf)) != ESP_OK) return ESP_FAIL;
+
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) return ESP_FAIL;
+
+    cJSON *mode = cJSON_GetObjectItem(root, "mode");
+
+    if (cJSON_IsString(mode))
+    {
+        if (strcmp(mode->valuestring, "color") == 0)
+        {
+            cJSON *r = cJSON_GetObjectItem(root, "r");
+            cJSON *g = cJSON_GetObjectItem(root, "g");
+            cJSON *b = cJSON_GetObjectItem(root, "b");
+
+            if (cJSON_IsNumber(r) && cJSON_IsNumber(g) && cJSON_IsNumber(b))
+            {
+                display_set_logo_color(
+                    r->valueint,
+                    g->valueint,
+                    b->valueint
+                );
+
+                display_clear();
+                display_draw_logo_colored(logo);
+            }
+        }
+        else if (strcmp(mode->valuestring, "logo") == 0)
+        {
+            display_clear();
+
+            // 🔥 recomendado: usar versión coloreada también
+            display_set_logo_color(255, 255, 255);
+            display_draw_logo_colored(logo);
+        }
+        else if (strcmp(mode->valuestring, "clear") == 0)
+        {
+            display_clear();
+        }
+    }
+
+    cJSON_Delete(root);
+    httpd_resp_sendstr(req, "OK");
+    return ESP_OK;
+}
+
+/* ================= INPUTS ================= */
+
 static esp_err_t inputs_get(httpd_req_t *req)
 {
     char resp[64];
@@ -209,6 +293,8 @@ static esp_err_t inputs_get(httpd_req_t *req)
     httpd_resp_sendstr(req, resp);
     return ESP_OK;
 }
+
+/* ================= STATUS ================= */
 
 static esp_err_t status_get(httpd_req_t *req)
 {
@@ -234,6 +320,8 @@ static esp_err_t status_get(httpd_req_t *req)
     return ESP_OK;
 }
 
+/* ================= RESET WIFI ================= */
+
 static esp_err_t reset_wifi_post(httpd_req_t *req)
 {
     ESP_LOGW(TAG, "Resetting WiFi credentials");
@@ -257,22 +345,21 @@ void web_server_start(void)
         return;
     }
 
-    httpd_register_uri_handler(server, &(httpd_uri_t){ .uri="/",          .method=HTTP_GET,  .handler=index_get });
-    httpd_register_uri_handler(server, &(httpd_uri_t){ .uri="/scan",      .method=HTTP_GET,  .handler=scan_get });
-    httpd_register_uri_handler(server, &(httpd_uri_t){ .uri="/connect",   .method=HTTP_POST, .handler=connect_post });
-    httpd_register_uri_handler(server, &(httpd_uri_t){ .uri="/relay",     .method=HTTP_POST, .handler=relay_post });
-    httpd_register_uri_handler(server, &(httpd_uri_t){ .uri="/inputs",    .method=HTTP_GET,  .handler=inputs_get });
-    httpd_register_uri_handler(server, &(httpd_uri_t){ .uri="/status",    .method=HTTP_GET,  .handler=status_get });
-    httpd_register_uri_handler(server, &(httpd_uri_t){ .uri="/reset_wifi",.method=HTTP_POST, .handler=reset_wifi_post });
+    httpd_register_uri_handler(server, &(httpd_uri_t){ .uri="/",           .method=HTTP_GET,  .handler=index_get });
+    httpd_register_uri_handler(server, &(httpd_uri_t){ .uri="/scan",       .method=HTTP_GET,  .handler=scan_get });
+    httpd_register_uri_handler(server, &(httpd_uri_t){ .uri="/connect",    .method=HTTP_POST, .handler=connect_post });
+    httpd_register_uri_handler(server, &(httpd_uri_t){ .uri="/relay",      .method=HTTP_POST, .handler=relay_post });
+    httpd_register_uri_handler(server, &(httpd_uri_t){ .uri="/display",    .method=HTTP_POST, .handler=display_post });
+    httpd_register_uri_handler(server, &(httpd_uri_t){ .uri="/inputs",     .method=HTTP_GET,  .handler=inputs_get });
+    httpd_register_uri_handler(server, &(httpd_uri_t){ .uri="/status",     .method=HTTP_GET,  .handler=status_get });
+    httpd_register_uri_handler(server, &(httpd_uri_t){ .uri="/reset_wifi", .method=HTTP_POST, .handler=reset_wifi_post });
 
     ESP_LOGI(TAG, "Web server started");
 
-    /* ==== AUTO CONNECT FROM NVS ==== */
     char ssid[32] = {0};
     char pass[64] = {0};
 
-	if (nvs_load_wifi(ssid, sizeof(ssid), pass, sizeof(pass))) {
-
+    if (nvs_load_wifi(ssid, sizeof(ssid), pass, sizeof(pass))) {
         ESP_LOGI(TAG, "Auto connecting to saved WiFi: %s", ssid);
         system_state_set(SYS_CONNECTING_STA);
         wifi_connect_sta(ssid, pass);

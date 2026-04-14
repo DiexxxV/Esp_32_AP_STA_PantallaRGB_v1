@@ -25,6 +25,42 @@ static const char *TAG = "MAIN";
 /* Imagen global */
 extern const uint16_t logo[4096];
 
+/* ===== CONTROL DISPLAY DESDE WEB ===== */
+typedef enum {
+    DISP_MODE_AUTO = 0,
+    DISP_MODE_LOGO,
+    DISP_MODE_COLOR,
+    DISP_MODE_CLEAR
+} display_mode_t;
+
+/* 🔥 Variables globales */
+volatile display_mode_t g_display_mode = DISP_MODE_AUTO;
+volatile uint8_t g_r = 0, g_g = 0, g_b = 0;
+
+/* ===== FUNCIONES PARA WEB ===== */
+void display_set_color(uint8_t r, uint8_t g, uint8_t b)
+{
+    g_r = r;
+    g_g = g;
+    g_b = b;
+    g_display_mode = DISP_MODE_COLOR;
+}
+
+void display_set_logo(void)
+{
+    g_display_mode = DISP_MODE_LOGO;
+}
+
+void display_set_clear(void)
+{
+    g_display_mode = DISP_MODE_CLEAR;
+}
+
+void display_set_auto(void)
+{
+    g_display_mode = DISP_MODE_AUTO;
+}
+
 void app_main(void)
 {
     esp_err_t err;
@@ -59,7 +95,11 @@ void app_main(void)
 
     /* ===== SPLASH ===== */
     display_clear();
-    display_draw_image(logo);
+
+    /* 🔥 FIX: usa API correcta del display */
+    display_set_logo_color(255, 255, 255);
+    display_draw_logo_colored(logo);
+
     display_draw_text(5, 54, "BOOT", 0, 255, 255);
     vTaskDelay(pdMS_TO_TICKS(2000));
 
@@ -69,48 +109,94 @@ void app_main(void)
     /* ===== WEB ===== */
     web_server_start();
 
-    /* ===== STATUS INICIAL ===== */
-    display_clear();
-    display_draw_image(logo);
-    display_draw_text(2, 54, "WIFI...", 255, 255, 0);
+    /* ===== INICIAL ===== */
+    display_set_auto();
 
     ESP_LOGI(TAG, "System started");
+
+    /* ===== CONTROL INTELIGENTE DE REDIBUJO ===== */
+    display_mode_t last_mode = -1;
+    uint8_t last_r = 255, last_g = 255, last_b = 255;
+    system_state_t last_state = -1;
 
     /* ===== LOOP PRINCIPAL ===== */
     while (1)
     {
-        system_state_t st = system_state_get();
+        /* =========================
+           🔥 PRIORIDAD: WEB CONTROL
+        ==========================*/
 
-        // ===== WIFI NO CONECTADO =====
-        if (st != SYS_STA_CONNECTED && st != SYS_RUNNING)
+        if (g_display_mode == DISP_MODE_COLOR)
         {
-            display_clear();
-            display_draw_image(logo);
-            display_draw_text(2, 54, "BUSCANDO...", 255, 150, 0);
+            if (last_mode != DISP_MODE_COLOR ||
+                last_r != g_r || last_g != g_g || last_b != g_b)
+            {
+                display_fill(g_r, g_g, g_b);
 
-            vTaskDelay(pdMS_TO_TICKS(1500));
+                last_r = g_r;
+                last_g = g_g;
+                last_b = g_b;
+                last_mode = DISP_MODE_COLOR;
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(100));
             continue;
         }
 
-        // ===== WIFI OK =====
-        display_clear();
-        display_draw_image(logo);
-        display_draw_text(2, 54, "ONLINE", 0, 255, 0);
-        vTaskDelay(pdMS_TO_TICKS(1500));
+        if (g_display_mode == DISP_MODE_LOGO)
+        {
+            if (last_mode != DISP_MODE_LOGO)
+            {
+                display_clear();
 
-        // ===== ANIMACIÓN =====
-        display_clear();
-        display_fill(0, 0, 40); // azul
-        vTaskDelay(pdMS_TO_TICKS(400));
+                /* 🔥 FIX: usar función correcta */
+                display_set_logo_color(255, 255, 255);
+                display_draw_logo_colored(logo);
 
-        display_clear();
-        display_fill(40, 0, 0); // rojo
-        vTaskDelay(pdMS_TO_TICKS(400));
+                last_mode = DISP_MODE_LOGO;
+            }
 
-        // ===== RUN =====
-        display_clear();
-        display_draw_image(logo);
-        display_draw_text(2, 54, "RUN", 0, 255, 255);
-        vTaskDelay(pdMS_TO_TICKS(1200));
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
+        }
+
+        if (g_display_mode == DISP_MODE_CLEAR)
+        {
+            if (last_mode != DISP_MODE_CLEAR)
+            {
+                display_clear();
+                last_mode = DISP_MODE_CLEAR;
+            }
+
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
+        }
+
+        /* =========================
+           🤖 MODO AUTOMÁTICO
+        ==========================*/
+
+        system_state_t st = system_state_get();
+
+        if (st != last_state)
+        {
+            last_state = st;
+            last_mode = DISP_MODE_AUTO;
+
+            display_clear();
+            display_set_logo_color(255, 255, 255);
+            display_draw_logo_colored(logo);
+
+            if (st != SYS_STA_CONNECTED && st != SYS_RUNNING)
+            {
+                display_draw_text(2, 54, "BUSCANDO...", 255, 150, 0);
+            }
+            else
+            {
+                display_draw_text(2, 54, "ONLINE", 0, 255, 0);
+            }
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(200));
     }
 }
